@@ -4,6 +4,13 @@ const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const {
+  syncProjectToDropbox,
+  syncFolderToDropbox,
+} = require("./syncProjectToDropbox");
+
+const cron = require("node-cron");
+
 require("dotenv").config();
 
 const PORT = process.env.PORT || 3000;
@@ -12,6 +19,18 @@ const AUTH_TOKEN = process.env.AUTH_TOKEN;
 if (AUTH_TOKEN === undefined) {
   console.error("Please set AUTH_TOKEN environment variable");
   process.exit(1);
+}
+
+function formatDate(dateToFormat) {
+  const year = dateToFormat.getFullYear();
+  const month = String(dateToFormat.getMonth() + 1).padStart(2, "0");
+  const day = String(dateToFormat.getDate()).padStart(2, "0");
+  const hours = String(dateToFormat.getHours()).padStart(2, "0");
+  const minutes = String(dateToFormat.getMinutes()).padStart(2, "0");
+  const seconds = String(dateToFormat.getSeconds()).padStart(2, "0");
+
+  const formattedDate = `${year}-${month}-${day}--${hours}-${minutes}-${seconds}`;
+  return formattedDate;
 }
 
 const app = express();
@@ -43,9 +62,10 @@ db.on("connected", function () {
 const projectSchema = new mongoose.Schema(
   {
     title: String,
+    deleted: { type: Boolean, default: false },
   },
   {
-    timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
+    timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" },
   }
 );
 
@@ -53,12 +73,13 @@ const fileSchema = new mongoose.Schema(
   {
     //   projectId: String,
     projectId: { type: mongoose.SchemaTypes.ObjectId, ref: "Project" },
-    id: String,
+    hash: String,
     filename: String,
     title: String,
+    deleted: { type: Boolean, default: false },
   },
   {
-    timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
+    timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" },
   }
 );
 
@@ -109,7 +130,7 @@ app.post("/projects", async (req, res) => {
 
 // Fetch all projects
 app.get("/projects", async (req, res) => {
-  const projects = await Project.find();
+  const projects = await Project.find({ deleted: false });
   res.send(projects);
 });
 
@@ -138,7 +159,7 @@ app.get("/projects/:id/files", async (req, res) => {
 
   try {
     // Fetch all file entries for the given project ID
-    const files = await FileEntry.find({ projectId: id });
+    const files = await FileEntry.find({ projectId: id, deleted: false });
 
     res.send(files);
   } catch (error) {
@@ -197,18 +218,24 @@ app.delete("/projects/:id", async (req, res) => {
     const filesToDelete = await FileEntry.find({ projectId: id }).exec();
 
     for (const file of filesToDelete) {
-      const filePath = path.join(dirPath, file.id);
+      const filePath = path.join(dirPath, file.hash);
 
       if (fs.existsSync(filePath)) {
         fs.rmSync(filePath, { recursive: true });
+      } else {
+        console.log(`File not found: ${filePath}`);
       }
 
       // Delete file entry from the database
-      await FileEntry.deleteOne({ _id: file._id });
+      //   await FileEntry.deleteOne({ _id: file._id });
+      file.deleted = true;
+      await file.save();
     }
 
     // Delete the project itself
-    await Project.deleteOne({ _id: id });
+    // await Project.deleteOne({ _id: id });
+    project.deleted = true;
+    await project.save();
 
     res.send("Project and associated files deleted");
   } catch (error) {
@@ -232,7 +259,7 @@ const handleFileUploads = async (files, projectId, projectTitle) => {
 
       const fileEntry = new FileEntry({
         projectId,
-        id: hash,
+        hash: hash,
         filename: file.originalname,
       });
 
@@ -296,7 +323,11 @@ app.get("/projects/:projectId/files/:fileId", async (req, res) => {
 
   try {
     // Find the file by its projectId and fileId
-    const file = await FileEntry.findOne({ projectId, id: fileId });
+    const file = await FileEntry.findOne({
+      projectId,
+      id: fileId,
+      deleted: false,
+    });
 
     if (!file) {
       return res.status(404).send("File not found");
@@ -335,6 +366,8 @@ app.put("/projects/:projectId/files/:fileId", async (req, res) => {
   }
 });
 
+
+
 // Delete file
 app.delete("/projects/:projectId/files/:fileId", async (req, res) => {
   const { projectId, fileId } = req.params;
@@ -345,14 +378,19 @@ app.delete("/projects/:projectId/files/:fileId", async (req, res) => {
     if (!project) return res.status(404).send("Project not found");
 
     // Delete file entry from the database
-    await FileEntry.deleteOne({ projectId, id: fileId });
+    // await FileEntry.deleteOne({ projectId, id: fileId });
+    const file = await FileEntry.findOne({ projectId, _id: fileId });
+    file.deleted = true;
+    await file.save();
 
     // Delete the corresponding file from the filesystem
     const dirPath = `uploads/${project.title}`;
-    const filePath = path.join(dirPath, fileId);
+    const filePath = path.join(dirPath, file.hash);
 
     if (fs.existsSync(filePath)) {
       fs.rmSync(filePath, { recursive: true });
+    } else {
+      console.log(`File not found: ${filePath}`);
     }
 
     res.send("File deleted");
@@ -365,3 +403,90 @@ app.delete("/projects/:projectId/files/:fileId", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
+
+// Function to export data to JSON
+async function exportDataToJSON() {
+  try {
+    // Fetch all projects and file entries
+    const projects = await Project.find();
+    const fileEntries = await FileEntry.find();
+
+    // Determine the last updated timestamp for projects and file entries
+    const lastUpdatedProject = projects.reduce(
+      (acc, current) => (acc.updatedAt > current.updatedAt ? acc : current),
+      { updatedAt: new Date(0) }
+    );
+    const lastUpdatedFileEntry = fileEntries.reduce(
+      (acc, current) => (acc.updatedAt > current.updatedAt ? acc : current),
+      { updatedAt: new Date(0) }
+    );
+
+    const projectTimestamp = lastUpdatedProject
+      ? formatDate(lastUpdatedProject.updatedAt)
+      : "no-data";
+    const fileEntryTimestamp = lastUpdatedFileEntry
+      ? formatDate(lastUpdatedFileEntry.updatedAt)
+      : "no-data";
+
+    // Convert data to JSON format
+    const projectsJSON = JSON.stringify(projects, null, 2);
+    const fileEntriesJSON = JSON.stringify(fileEntries, null, 2);
+
+    const dirPath = `uploads/_exports`;
+    try {
+      fs.rmSync(dirPath, { recursive: true });
+    } catch (error) {
+      console.log("no _exports folder yet.");
+    }
+
+    try {
+      fs.mkdirSync(dirPath, { recursive: true });
+    } catch (error) {
+      console.error("Error creating _exports folder:", error);
+    }
+
+    // Write JSON data to separate files with the timestamp in the filename
+    fs.writeFileSync(
+      `uploads/_exports/projects_${projectTimestamp}.json`,
+      projectsJSON
+    );
+    fs.writeFileSync(
+      `uploads/_exports/fileEntries_${fileEntryTimestamp}.json`,
+      fileEntriesJSON
+    );
+
+    console.log("Data exported to JSON files with timestamps.");
+  } catch (error) {
+    console.error("Error exporting data to JSON:", error);
+  }
+}
+
+// Schedule the task to run every night at 2am
+cron.schedule("0 2 * * *", async () => {
+  backup();
+});
+
+async function backup() {
+  // Changed to async function
+  console.log("Running nightly Dropbox upload");
+
+  try {
+    // Fetch all projects
+    const projects = await Project.find();
+
+    // Loop through each project and sync to Dropbox
+    for (const project of projects) {
+      console.log(`Syncing project: ${project.title}`);
+      syncProjectToDropbox(project.title);
+    }
+  } catch (error) {
+    console.error("Error in scheduled task: ", error);
+  }
+
+  exportDataToJSON();
+  syncFolderToDropbox("_exports");
+
+  console.log("Finish nightly Dropbox upload");
+}
+
+backup();
