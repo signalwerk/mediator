@@ -1,17 +1,29 @@
 import fs from "fs";
 import path from "path";
 import { Dropbox } from "dropbox";
-
 import dotenv from "dotenv";
 dotenv.config();
 
-const DROPBOX_ACCESS_TOKEN = process.env.DROPBOX_ACCESS_TOKEN;
+const ROOT_UPLOAD_PATH = process.env.ROOT_UPLOAD_PATH;
+const ROOT_CACHE_PATH = process.env.ROOT_CACHE_PATH;
 
-if (DROPBOX_ACCESS_TOKEN === undefined) {
-  console.error("Please set DROPBOX_ACCESS_TOKEN environment variable");
+const DROPBOX_APP_KEY = process.env.DROPBOX_APP_KEY;
+const DROPBOX_APP_SECRET = process.env.DROPBOX_APP_SECRET;
+
+if (DROPBOX_APP_KEY === undefined) {
+  console.error("Please set DROPBOX_APP_KEY environment variable");
   process.exit(1);
 }
-const dbx = new Dropbox({ accessToken: DROPBOX_ACCESS_TOKEN });
+if (DROPBOX_APP_SECRET === undefined) {
+  console.error("Please set DROPBOX_APP_SECRET environment variable");
+  process.exit(1);
+}
+
+// Initialize Dropbox SDK
+export const dbx = new Dropbox({
+  clientId: DROPBOX_APP_KEY,
+  clientSecret: DROPBOX_APP_SECRET,
+});
 
 export async function syncFolderToDropbox(projectName) {
   const dropboxFolderPath = `/BACKUP/${projectName}`;
@@ -41,7 +53,7 @@ export async function syncFolderToDropbox(projectName) {
 
   // Step 2: Fetch list of all local files for the project
   const localFiles = [];
-  const localDirPath = `uploads/${projectName}`;
+  const localDirPath = `${ROOT_UPLOAD_PATH}/${projectName}`;
   if (fs.existsSync(localDirPath)) {
     fs.readdirSync(localDirPath).forEach((file) => {
       localFiles.push(file);
@@ -99,7 +111,7 @@ export async function syncProjectToDropbox(projectName) {
 
   // Step 2: Fetch list of all local files for the project
   const localFiles = [];
-  const localDirPath = `uploads/${projectName}`;
+  const localDirPath = `${ROOT_UPLOAD_PATH}/${projectName}`;
   if (fs.existsSync(localDirPath)) {
     fs.readdirSync(localDirPath).forEach((file) => {
       localFiles.push(file);

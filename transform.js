@@ -3,11 +3,14 @@ import path from "path";
 import sharp from "sharp";
 import objHash from "object-hash";
 
+const ROOT_UPLOAD_PATH = process.env.ROOT_UPLOAD_PATH;
+const ROOT_CACHE_PATH = process.env.ROOT_CACHE_PATH;
+
 function rootPathGet({ project, identifier }) {
-  return `uploads/${project}/${identifier}`;
+  return `${ROOT_UPLOAD_PATH}/${project}/${identifier}`;
 }
 function rootCachePathGet({ project, identifier }) {
-  return `cache/${project}/${identifier}`;
+  return `${ROOT_CACHE_PATH}/${project}/${identifier}`;
 }
 
 export async function getProcessed({

@@ -8,6 +8,7 @@ import crypto from "crypto";
 import {
   syncProjectToDropbox,
   syncFolderToDropbox,
+  dbx,
 } from "./syncProjectToDropbox.js";
 import { getAsset, computeImage, getProcessed } from "./transform.js";
 
@@ -15,13 +16,17 @@ import cron from "node-cron";
 import dotenv from "dotenv";
 dotenv.config();
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3010;
+const ROOT_UPLOAD_PATH = process.env.ROOT_UPLOAD_PATH;
+const ROOT_CACHE_PATH = process.env.ROOT_CACHE_PATH;
 const AUTH_TOKEN = process.env.AUTH_TOKEN;
 
 if (AUTH_TOKEN === undefined) {
   console.error("Please set AUTH_TOKEN environment variable");
   process.exit(1);
 }
+
+const DROPBOX_CODE = "oaifhoabldfzeiuoabdfz";
 
 function formatDate(dateToFormat) {
   const year = dateToFormat.getFullYear();
@@ -85,8 +90,20 @@ const fileSchema = new mongoose.Schema(
   }
 );
 
+const syncSchema = new mongoose.Schema(
+  {
+    type: String,
+    token: String,
+    refresh: String,
+  },
+  {
+    timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" },
+  }
+);
+
 const Project = mongoose.model("Project", projectSchema);
 const FileEntry = mongoose.model("FileEntry", fileSchema);
+const SyncEntry = mongoose.model("Sync", syncSchema);
 
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -117,7 +134,69 @@ function checkAuthHeader(req, res, next) {
 
 app.use(express.json());
 
-const upload = multer({ dest: "uploads/" });
+const upload = multer({ dest: `${ROOT_UPLOAD_PATH}/` });
+
+// Fetch all projects
+app.get("/", async (req, res) => {
+  // hello world
+  res.send("DB login: <a href='/oauth'>oauth</a>");
+});
+
+app.get("/oauth", async (req, res) => {
+  // Generate the OAuth2 authorization URL
+  const authUrl = await dbx.auth.getAuthenticationUrl(
+    `http://localhost:${PORT}/oauth/callback`,
+    DROPBOX_CODE,
+    "code",
+    "offline"
+  );
+
+  // Redirect user to the authorization URL
+  res.redirect(authUrl);
+});
+
+app.get("/oauth/callback", async (req, res) => {
+  try {
+    const { code } = req.query;
+
+    // Get the access token
+    const result = await dbx.auth.getAccessTokenFromCode(
+      `http://localhost:${PORT}/oauth/callback`,
+      code
+    );
+
+    console.log({ result });
+
+    // Now you have the long-term access token, which you can use for further Dropbox API calls.
+    // Save this token securely for future use.
+    const accessToken = result.result.access_token;
+    const refreshToken = result.result.refresh_token;
+
+    await dbx.auth.setAccessToken(accessToken);
+    await dbx.auth.setRefreshToken(refreshToken);
+
+    // Create or update the SyncEntry in the database
+    let syncEntry = await SyncEntry.findOne({ type: "dropbox" });
+
+    if (!syncEntry) {
+      syncEntry = new SyncEntry({
+        type: "dropbox",
+        token: accessToken,
+        refresh: refreshToken,
+      });
+    } else {
+      syncEntry.token = accessToken;
+      syncEntry.refresh = refreshToken;
+    }
+
+    await syncEntry.save();
+
+    res.send(`<a href='/oauth'>oauth</a> <br>Access Token: ${accessToken}`);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send("Failed to get access token.");
+  }
+});
 
 // Create new project
 app.post("/projects", checkAuthHeader, async (req, res) => {
@@ -183,8 +262,8 @@ app.put("/projects/:id", checkAuthHeader, async (req, res) => {
     await project.save();
 
     // Rename the associated upload subfolder
-    const oldDirPath = `uploads/${oldTitle}`;
-    const newDirPath = `uploads/${newTitle}`;
+    const oldDirPath = `${ROOT_UPLOAD_PATH}/${oldTitle}`;
+    const newDirPath = `${ROOT_UPLOAD_PATH}/${newTitle}`;
 
     if (fs.existsSync(oldDirPath)) {
       fs.renameSync(oldDirPath, newDirPath);
@@ -207,7 +286,7 @@ app.delete("/projects/:id", checkAuthHeader, async (req, res) => {
     if (!project) return res.status(404).send("Project not found");
 
     // Delete and rename the associated upload subfolder
-    const dirPath = `uploads/${project.title}`;
+    const dirPath = `${ROOT_UPLOAD_PATH}/${project.title}`;
 
     if (fs.existsSync(dirPath)) {
       fs.rmSync(dirPath, { recursive: true });
@@ -262,7 +341,7 @@ const handleFileUploads = async (files, projectId, projectTitle) => {
         filename: file.originalname,
       });
 
-      const dirPath = `uploads/${projectTitle}/${hash}`;
+      const dirPath = `${ROOT_UPLOAD_PATH}/${projectTitle}/${hash}`;
       if (!fs.existsSync(dirPath)) {
         fs.mkdirSync(dirPath, { recursive: true });
       }
@@ -406,7 +485,7 @@ app.delete(
       await file.save();
 
       // Delete the corresponding file from the filesystem
-      const dirPath = `uploads/${project.title}`;
+      const dirPath = `${ROOT_UPLOAD_PATH}/${project.title}`;
       const filePath = path.join(dirPath, file.hash);
 
       if (fs.existsSync(filePath)) {
@@ -494,7 +573,7 @@ async function exportDataToJSON() {
     const projectsJSON = JSON.stringify(projects, null, 2);
     const fileEntriesJSON = JSON.stringify(fileEntries, null, 2);
 
-    const dirPath = `uploads/_exports`;
+    const dirPath = `${ROOT_UPLOAD_PATH}/_exports`;
     try {
       fs.rmSync(dirPath, { recursive: true });
     } catch (error) {
@@ -509,11 +588,11 @@ async function exportDataToJSON() {
 
     // Write JSON data to separate files with the timestamp in the filename
     fs.writeFileSync(
-      `uploads/_exports/projects_${projectTimestamp}.json`,
+      `${ROOT_UPLOAD_PATH}/_exports/projects_${projectTimestamp}.json`,
       projectsJSON
     );
     fs.writeFileSync(
-      `uploads/_exports/fileEntries_${fileEntryTimestamp}.json`,
+      `${ROOT_UPLOAD_PATH}/_exports/fileEntries_${fileEntryTimestamp}.json`,
       fileEntriesJSON
     );
 
@@ -527,6 +606,31 @@ async function exportDataToJSON() {
 cron.schedule("0 2 * * *", async () => {
   backup();
 });
+// update dropbox token every 2 hours
+cron.schedule("0 */2 * * *", async () => {
+  setDropboxToken();
+});
+
+async function setDropboxToken() {
+  // Create or update the SyncEntry in the database
+  let syncEntry = await SyncEntry.findOne({ type: "dropbox" });
+
+  if (syncEntry) {
+    console.log("Found existing Dropbox token");
+    const accessToken = syncEntry.token;
+    const refreshToken = syncEntry.refresh;
+
+    await dbx.auth.setAccessToken(accessToken);
+    await dbx.auth.setRefreshToken(refreshToken);
+
+    await dbx.auth.refreshAccessToken();
+
+    syncEntry.token = await dbx.auth.getAccessToken();
+    syncEntry.refresh = await dbx.auth.getRefreshToken();
+
+    await syncEntry.save();
+  }
+}
 
 async function backup() {
   // Changed to async function
@@ -551,4 +655,5 @@ async function backup() {
   console.log("Finish nightly Dropbox upload");
 }
 
+setDropboxToken();
 backup();
