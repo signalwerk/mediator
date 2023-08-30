@@ -1,17 +1,19 @@
-const express = require("express");
-const mongoose = require("mongoose");
-const multer = require("multer");
-const fs = require("fs");
-const path = require("path");
-const crypto = require("crypto");
-const {
+import express from "express";
+import { urlToStack } from "./url/urlToStack.js";
+import mongoose from "mongoose";
+import multer from "multer";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import {
   syncProjectToDropbox,
   syncFolderToDropbox,
-} = require("./syncProjectToDropbox");
+} from "./syncProjectToDropbox.js";
+import { getAsset, computeImage, getProcessed } from "./transform.js";
 
-const cron = require("node-cron");
-
-require("dotenv").config();
+import cron from "node-cron";
+import dotenv from "dotenv";
+dotenv.config();
 
 const PORT = process.env.PORT || 3000;
 const AUTH_TOKEN = process.env.AUTH_TOKEN;
@@ -86,17 +88,6 @@ const fileSchema = new mongoose.Schema(
 const Project = mongoose.model("Project", projectSchema);
 const FileEntry = mongoose.model("FileEntry", fileSchema);
 
-// Middleware to check the Authorization header
-function checkAuthHeader(req, res, next) {
-  const authHeader = req.headers["authorization"];
-
-  if (!authHeader || authHeader !== `Bearer ${AUTH_TOKEN}`) {
-    return res.status(401).send("Unauthorized");
-  }
-
-  next();
-}
-
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader(
@@ -113,15 +104,23 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+// Middleware to check the Authorization header
+function checkAuthHeader(req, res, next) {
+  const authHeader = req.headers["authorization"];
 
-// Apply the checkAuthHeader middleware to all routes
-app.use(checkAuthHeader);
+  if (!authHeader || authHeader !== `Bearer ${AUTH_TOKEN}`) {
+    return res.status(401).send("Unauthorized");
+  }
+
+  next();
+}
+
+app.use(express.json());
 
 const upload = multer({ dest: "uploads/" });
 
 // Create new project
-app.post("/projects", async (req, res) => {
+app.post("/projects", checkAuthHeader, async (req, res) => {
   const { title, id } = req.body;
   const project = new Project({ title, id });
   await project.save();
@@ -129,13 +128,13 @@ app.post("/projects", async (req, res) => {
 });
 
 // Fetch all projects
-app.get("/projects", async (req, res) => {
+app.get("/projects", checkAuthHeader, async (req, res) => {
   const projects = await Project.find({ deleted: false });
   res.send(projects);
 });
 
 // Get project details
-app.get("/projects/:id", async (req, res) => {
+app.get("/projects/:id", checkAuthHeader, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -154,7 +153,7 @@ app.get("/projects/:id", async (req, res) => {
 });
 
 // List files for a project
-app.get("/projects/:id/files", async (req, res) => {
+app.get("/projects/:id/files", checkAuthHeader, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -169,7 +168,7 @@ app.get("/projects/:id/files", async (req, res) => {
 });
 
 // Rename project
-app.put("/projects/:id", async (req, res) => {
+app.put("/projects/:id", checkAuthHeader, async (req, res) => {
   const { id } = req.params;
   const { newTitle } = req.body;
 
@@ -199,7 +198,7 @@ app.put("/projects/:id", async (req, res) => {
 });
 
 // Delete project
-app.delete("/projects/:id", async (req, res) => {
+app.delete("/projects/:id", checkAuthHeader, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -284,121 +283,184 @@ const handleFileUploads = async (files, projectId, projectTitle) => {
 };
 
 // Single file upload
-app.post("/projects/:id/upload", upload.single("file"), async (req, res) => {
-  const { id } = req.params;
-  const project = await Project.findById(id);
-
-  if (!project) return res.status(404).send("Project not found");
-
-  const uploadedFiles = await handleFileUploads([req.file], id, project.title);
-
-  if (uploadedFiles.length > 0) {
-    res.send(uploadedFiles[0]);
-  } else {
-    res.status(409).send("File may already exist");
-  }
-});
-
-// Multiple files upload
-app.post("/projects/:id/uploads", upload.array("files[]"), async (req, res) => {
-  const { id } = req.params;
-  const project = await Project.findById(id);
-
-  if (!project) return res.status(404).send("Project not found");
-
-  const uploadedFiles = await handleFileUploads(req.files, id, project.title);
-
-  if (uploadedFiles.length > 0) {
-    res.send(uploadedFiles);
-  } else {
-    res
-      .status(409)
-      .send("No new files were uploaded. Files may already exist.");
-  }
-});
-
-// Fetch a single file's details
-app.get("/projects/:projectId/files/:fileId", async (req, res) => {
-  const { projectId, fileId } = req.params;
-
-  try {
-    // Find the file by its projectId and fileId
-    const file = await FileEntry.findOne({
-      projectId,
-      id: fileId,
-      deleted: false,
-    });
-
-    if (!file) {
-      return res.status(404).send("File not found");
-    }
-
-    res.send(file);
-  } catch (error) {
-    console.error("Error fetching file:", error);
-    res.status(500).send("An error occurred while fetching file");
-  }
-});
-
-// Edit file title
-app.put("/projects/:projectId/files/:fileId", async (req, res) => {
-  const { projectId, fileId } = req.params;
-  const { newTitle } = req.body; // Assume that the new title comes in the request body
-
-  try {
-    // Find the file by its projectId and fileId
-    const file = await FileEntry.findOne({ projectId, id: fileId });
-
-    if (!file) {
-      return res.status(404).send("File not found");
-    }
-
-    // Update the title
-    file.title = newTitle;
-
-    // Save changes to the database
-    await file.save();
-
-    res.send(file);
-  } catch (error) {
-    console.error("Error editing file title:", error);
-    res.status(500).send("An error occurred while editing file title");
-  }
-});
-
-
-
-// Delete file
-app.delete("/projects/:projectId/files/:fileId", async (req, res) => {
-  const { projectId, fileId } = req.params;
-
-  try {
-    const project = await Project.findById(projectId);
+app.post(
+  "/projects/:id/upload",
+  upload.single("file"),
+  checkAuthHeader,
+  async (req, res) => {
+    const { id } = req.params;
+    const project = await Project.findById(id);
 
     if (!project) return res.status(404).send("Project not found");
 
-    // Delete file entry from the database
-    // await FileEntry.deleteOne({ projectId, id: fileId });
-    const file = await FileEntry.findOne({ projectId, _id: fileId });
-    file.deleted = true;
-    await file.save();
+    const uploadedFiles = await handleFileUploads(
+      [req.file],
+      id,
+      project.title
+    );
 
-    // Delete the corresponding file from the filesystem
-    const dirPath = `uploads/${project.title}`;
-    const filePath = path.join(dirPath, file.hash);
-
-    if (fs.existsSync(filePath)) {
-      fs.rmSync(filePath, { recursive: true });
+    if (uploadedFiles.length > 0) {
+      res.send(uploadedFiles[0]);
     } else {
-      console.log(`File not found: ${filePath}`);
+      res.status(409).send("File may already exist");
+    }
+  }
+);
+
+// Multiple files upload
+app.post(
+  "/projects/:id/uploads",
+  upload.array("files[]"),
+  checkAuthHeader,
+  async (req, res) => {
+    const { id } = req.params;
+    const project = await Project.findById(id);
+
+    if (!project) return res.status(404).send("Project not found");
+
+    const uploadedFiles = await handleFileUploads(req.files, id, project.title);
+
+    if (uploadedFiles.length > 0) {
+      res.send(uploadedFiles);
+    } else {
+      res
+        .status(409)
+        .send("No new files were uploaded. Files may already exist.");
+    }
+  }
+);
+
+// Fetch a single file's details
+app.get(
+  "/projects/:projectId/files/:fileId",
+  checkAuthHeader,
+  async (req, res) => {
+    const { projectId, fileId } = req.params;
+
+    try {
+      // Find the file by its projectId and fileId
+      const file = await FileEntry.findOne({
+        projectId,
+        _id: fileId,
+        deleted: false,
+      });
+
+      if (!file) {
+        return res.status(404).send("File not found");
+      }
+
+      res.send(file);
+    } catch (error) {
+      console.error("Error fetching file:", error);
+      res.status(500).send("An error occurred while fetching file");
+    }
+  }
+);
+
+// Edit file title
+app.put(
+  "/projects/:projectId/files/:fileId",
+  checkAuthHeader,
+  async (req, res) => {
+    const { projectId, fileId } = req.params;
+    const { newTitle } = req.body;
+
+    try {
+      // Find the file by its projectId and fileId
+      const file = await FileEntry.findOne({ projectId, _id: fileId });
+
+      if (!file) {
+        return res.status(404).send("File not found");
+      }
+
+      // Update the title
+      file.title = newTitle;
+
+      // Save changes to the database
+      await file.save();
+
+      res.send(file);
+    } catch (error) {
+      console.error("Error editing file title:", error);
+      res.status(500).send("An error occurred while editing file title");
+    }
+  }
+);
+
+// Delete file
+app.delete(
+  "/projects/:projectId/files/:fileId",
+  checkAuthHeader,
+  async (req, res) => {
+    const { projectId, fileId } = req.params;
+
+    try {
+      const project = await Project.findById(projectId);
+
+      if (!project) return res.status(404).send("Project not found");
+
+      // Delete file entry from the database
+      // await FileEntry.deleteOne({ projectId, id: fileId });
+      const file = await FileEntry.findOne({ projectId, _id: fileId });
+      file.deleted = true;
+      await file.save();
+
+      // Delete the corresponding file from the filesystem
+      const dirPath = `uploads/${project.title}`;
+      const filePath = path.join(dirPath, file.hash);
+
+      if (fs.existsSync(filePath)) {
+        fs.rmSync(filePath, { recursive: true });
+      } else {
+        console.log(`File not found: ${filePath}`);
+      }
+
+      res.send("File deleted");
+    } catch (error) {
+      console.error("Error deleting file:", error);
+      res.status(500).send("An error occurred while deleting file");
+    }
+  }
+);
+
+app.get(
+  "/:project/:identifier(*)/:operations/:slug.:format",
+
+  async (req, res) => {
+    const project = req.params.project;
+    const operations = urlToStack(req.params.operations);
+    const identifier = req.params.identifier || ""; // .replace(/[^a-zA-Z0-9]/g, "").trim();
+    const slug = req.params.slug;
+    const format = req.params.format || "jpg";
+
+    try {
+      const img = await getProcessed({
+        project,
+        operations,
+        format,
+        identifier,
+      });
+
+      // make sure the content type is set for the correct format.
+      res.set("Content-Type", `image/${format}`);
+
+      res.send(img);
+    } catch (error) {
+      console.log(`An error occurred during processing: ${error}`);
+
+      res.send(`An error occurred during processing: ${error}`, 500);
     }
 
-    res.send("File deleted");
-  } catch (error) {
-    console.error("Error deleting file:", error);
-    res.status(500).send("An error occurred while deleting file");
+    // res.json({
+    //   path,
+    //   project,
+    //   operations,
+    //   identifier,
+    //   slug,
+    //   format,
+    // });
   }
-});
+);
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

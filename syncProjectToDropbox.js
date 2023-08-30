@@ -1,6 +1,9 @@
-const fs = require("fs");
-const path = require("path");
-require("dotenv").config();
+import fs from "fs";
+import path from "path";
+import { Dropbox } from "dropbox";
+
+import dotenv from "dotenv";
+dotenv.config();
 
 const DROPBOX_ACCESS_TOKEN = process.env.DROPBOX_ACCESS_TOKEN;
 
@@ -8,10 +11,9 @@ if (DROPBOX_ACCESS_TOKEN === undefined) {
   console.error("Please set DROPBOX_ACCESS_TOKEN environment variable");
   process.exit(1);
 }
-const Dropbox = require("dropbox").Dropbox;
 const dbx = new Dropbox({ accessToken: DROPBOX_ACCESS_TOKEN });
 
-async function syncFolderToDropbox(projectName) {
+export async function syncFolderToDropbox(projectName) {
   const dropboxFolderPath = `/BACKUP/${projectName}`;
 
   // Step 1: Try to fetch list of all files in the Dropbox folder
@@ -69,7 +71,7 @@ async function syncFolderToDropbox(projectName) {
   }
 }
 
-async function syncProjectToDropbox(projectName) {
+export async function syncProjectToDropbox(projectName) {
   const dropboxFolderPath = `/BACKUP/${projectName}`;
 
   // Step 1: Try to fetch list of all files in the Dropbox folder
@@ -159,6 +161,3 @@ async function uploadToDropbox(filePath, localRemotePath) {
     console.error("Error uploading to Dropbox:", error);
   }
 }
-
-exports.syncProjectToDropbox = syncProjectToDropbox;
-exports.syncFolderToDropbox = syncFolderToDropbox;
