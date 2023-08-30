@@ -17,9 +17,11 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const PORT = process.env.PORT || 3010;
+const PUBLIC_URI = process.env.PUBLIC_URI || `http://localhost:${PORT}`;
 const ROOT_UPLOAD_PATH = process.env.ROOT_UPLOAD_PATH;
 const ROOT_CACHE_PATH = process.env.ROOT_CACHE_PATH;
 const AUTH_TOKEN = process.env.AUTH_TOKEN;
+const DROPBOX_USER_ID = process.env.DROPBOX_USER_ID;
 
 if (AUTH_TOKEN === undefined) {
   console.error("Please set AUTH_TOKEN environment variable");
@@ -137,15 +139,35 @@ app.use(express.json());
 const upload = multer({ dest: `${ROOT_UPLOAD_PATH}/` });
 
 // Fetch all projects
+// app.get("/", async (req, res) => {
+//   // hello world
+//   res.send("DB login: <a href='/oauth'>oauth</a>");
+// });
+
 app.get("/", async (req, res) => {
-  // hello world
-  res.send("DB login: <a href='/oauth'>oauth</a>");
+  let syncEntry = await SyncEntry.findOne({ type: "dropbox" });
+
+  const defaultText = `<br><br>Go to login: <a href='/oauth'>oauth</a>`;
+
+  if (!syncEntry || !syncEntry.updatedAt) {
+    return res.send(`No sync has occurred yet.${defaultText}`);
+  }
+
+  const currentTime = new Date();
+  const diffInMilliseconds = currentTime - new Date(syncEntry.updatedAt);
+  const diffInMinutes = Math.floor(diffInMilliseconds / (1000 * 60));
+  const diffInHours = Math.floor(diffInMinutes / 60);
+  const remainingMinutes = diffInMinutes % 60;
+
+  res.send(
+    `Last Dropbox connection was ${diffInHours}h ${remainingMinutes}m ago.${defaultText}`
+  );
 });
 
 app.get("/oauth", async (req, res) => {
   // Generate the OAuth2 authorization URL
   const authUrl = await dbx.auth.getAuthenticationUrl(
-    `http://localhost:${PORT}/oauth/callback`,
+    `${PUBLIC_URI}/oauth/callback`,
     DROPBOX_CODE,
     "code",
     "offline"
@@ -161,11 +183,19 @@ app.get("/oauth/callback", async (req, res) => {
 
     // Get the access token
     const result = await dbx.auth.getAccessTokenFromCode(
-      `http://localhost:${PORT}/oauth/callback`,
+      `${PUBLIC_URI}/oauth/callback`,
       code
     );
 
     console.log({ result });
+
+    const user = result.result.uid;
+
+    if (user !== process.env.DROPBOX_USER_ID) {
+      console.error(error);
+      res.status(500).send("Failed only for admin user.");
+      return;
+    }
 
     // Now you have the long-term access token, which you can use for further Dropbox API calls.
     // Save this token securely for future use.
