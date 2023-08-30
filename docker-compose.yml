@@ -1,0 +1,16 @@
+version: "3.4"
+services:
+  mediator-be:
+    build:
+      dockerfile: Dockerfile
+      context: .
+    container_name: mediator-be
+    restart: unless-stopped
+    # tty: true
+    environment:
+      TZ: "Europe/Zurich"
+    ports:
+      - "3010:3010"
+    volumes:
+      - /DATA/mediator/uploads:/DATA/uploads
+      - /DATA/mediator/cache:/DATA/cache
