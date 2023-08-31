@@ -439,6 +439,13 @@ app.post(
   }
 );
 
+// run a backup
+app.get("/backup", checkAuthHeader, async (req, res) => {
+  backup();
+
+  res.send(`start backup`);
+});
+
 // Fetch a single file's details
 app.get(
   "/projects/:projectId/files/:fileId",
