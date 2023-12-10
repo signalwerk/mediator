@@ -147,7 +147,7 @@ const upload = multer({ dest: `${ROOT_UPLOAD_PATH}/` });
 app.get("/", async (req, res) => {
   let syncEntry = await SyncEntry.findOne({ type: "dropbox" });
 
-  const defaultText = `<br><br>Go to login: <a href='/oauth'>oauth</a>`;
+  const defaultText = `<br><br>Go to login: <a href='/oauth'>oauth</a><br><br>Go to <a href='https://mediator.signalwerk.ch/' target='_blank'>ui</a>`;
 
   if (!syncEntry || !syncEntry.updatedAt) {
     return res.send(`No sync has occurred yet.${defaultText}`);
