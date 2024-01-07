@@ -9,6 +9,9 @@ const ROOT_CACHE_PATH = process.env.ROOT_CACHE_PATH;
 
 const DROPBOX_APP_KEY = process.env.DROPBOX_APP_KEY;
 const DROPBOX_APP_SECRET = process.env.DROPBOX_APP_SECRET;
+const DROPBOX_ROOT_ID = process.env.DROPBOX_ROOT_ID || "production";
+
+const DROPBOX_ROOT = `/BACKUP/${DROPBOX_ROOT_ID}`;
 
 if (DROPBOX_APP_KEY === undefined) {
   console.error("Please set DROPBOX_APP_KEY environment variable");
@@ -25,8 +28,31 @@ export const dbx = new Dropbox({
   clientSecret: DROPBOX_APP_SECRET,
 });
 
+/*
+async function createFolderRecursively(dbx, folderPath) {
+  const folders = folderPath.split('/').filter(Boolean);
+  let currentPath = '';
+
+  for (const folder of folders) {
+    currentPath += `/${folder}`;
+    try {
+      // Try to create the folder. If it already exists, an error is thrown
+      await dbx.filesCreateFolderV2({ path: currentPath });
+      console.log(`Folder created: ${currentPath}`);
+    } catch (error) {
+      // Check if the error is because the folder already exists
+      if (error?.error?.error?.['.tag'] !== 'path_lookup' && error?.error?.error?.path?.['.tag'] !== 'conflict') {
+        // If the error is not due to the folder already existing, throw the error
+        throw error;
+      }
+      console.log(`Folder already exists: ${currentPath}`);
+    }
+  }
+}
+*/
+
 export async function syncFolderToDropbox(projectName) {
-  const dropboxFolderPath = `/BACKUP/${projectName}`;
+  const dropboxFolderPath = `${DROPBOX_ROOT}/${projectName}`;
 
   // Step 1: Try to fetch list of all files in the Dropbox folder
   let dropboxFiles = [];
@@ -37,6 +63,7 @@ export async function syncFolderToDropbox(projectName) {
 
     dropboxFiles = result.result.entries.map((entry) => entry.name);
   } catch (error) {
+    console.log("error on dropbox filesListFolder");
     if (error?.error?.error[".tag"] === "path") {
       // Assuming the folder doesn't exist, so we create it
       try {
@@ -68,7 +95,7 @@ export async function syncFolderToDropbox(projectName) {
         console.log(`Uploading missing file: ${localFile}`);
         await uploadToDropbox(
           localFilePath,
-          `/BACKUP/${projectName}/${localFile}`
+          `${DROPBOX_ROOT}/${projectName}/${localFile}`
         );
       }
     }
@@ -78,13 +105,13 @@ export async function syncFolderToDropbox(projectName) {
   for (const dropboxFile of dropboxFiles) {
     if (!localFiles.includes(dropboxFile)) {
       console.log(`Removing extra file: ${dropboxFile}`);
-      await removeFromDropbox(`/BACKUP/${projectName}/${dropboxFile}`);
+      await removeFromDropbox(`${DROPBOX_ROOT}/${projectName}/${dropboxFile}`);
     }
   }
 }
 
 export async function syncProjectToDropbox(projectName) {
-  const dropboxFolderPath = `/BACKUP/${projectName}`;
+  const dropboxFolderPath = `${DROPBOX_ROOT}/${projectName}`;
 
   // Step 1: Try to fetch list of all files in the Dropbox folder
   let dropboxFiles = [];
@@ -125,7 +152,7 @@ export async function syncProjectToDropbox(projectName) {
       if (fs.existsSync(localFilePath)) {
         console.log(`Uploading missing file: ${localFile}`);
 
-        const remoteFolder = `/BACKUP/${projectName}/${localFile}`;
+        const remoteFolder = `${DROPBOX_ROOT}/${projectName}/${localFile}`;
         const remotePath = path.join(remoteFolder, "file");
         try {
           const localRemotePath = path.join(remoteFolder, "file");
@@ -147,7 +174,7 @@ export async function syncProjectToDropbox(projectName) {
   for (const dropboxFile of dropboxFiles) {
     if (!localFiles.includes(dropboxFile)) {
       console.log(`Removing extra file: ${dropboxFile}`);
-      await removeFromDropbox(`/BACKUP/${projectName}/${dropboxFile}`);
+      await removeFromDropbox(`${DROPBOX_ROOT}/${projectName}/${dropboxFile}`);
     }
   }
 }
