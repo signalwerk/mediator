@@ -29,8 +29,8 @@
 FROM node:18
 
 # Copy libvips binaries and libraries from the build-stage
-COPY --from=build-stage /usr/local/lib /usr/local/lib
-COPY --from=build-stage /usr/local/bin /usr/local/bin
+# COPY --from=build-stage /usr/local/lib /usr/local/lib
+# COPY --from=build-stage /usr/local/bin /usr/local/bin
 
 # Set the working directory inside the container
 WORKDIR /app
