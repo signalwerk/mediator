@@ -10,7 +10,7 @@ import {
   syncFolderToDropbox,
   dbx,
 } from "./syncProjectToDropbox.js";
-import { getAsset, computeImage, getProcessed } from "./transform.js";
+import { getAsset, computeImage, getInfo, getProcessed } from "./transform.js";
 
 import cron from "node-cron";
 import dotenv from "dotenv";
@@ -550,6 +550,24 @@ app.get(
     const format = req.params.format || "jpg";
 
     try {
+      if (format === "json") {
+        const { exif, ...meta } = await getInfo({
+          project,
+          operations,
+          format,
+          identifier,
+        });
+
+        res.json({
+          project,
+          operations,
+          format,
+          identifier,
+          meta,
+        });
+        return;
+      }
+
       const img = await getProcessed({
         project,
         operations,

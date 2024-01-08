@@ -91,9 +91,24 @@ export function getSharpOfStorage({ path }) {
   return sharp(path);
 }
 
-export async function getInfo({ path }) {
+export async function getInfo({ project, operations, format, identifier }) {
+  const { path: cachePath, status } = isCached({
+    project,
+    operations,
+    format,
+    identifier,
+  });
+
+  if (status) {
+    return JSON.parse(fs.readFileSync(cachePath));
+  }
+
+  const path = getAsset({ project, identifier });
+
   let img = await getSharpOfStorage({ path });
+
   const { orientation } = await img.metadata();
+
   const metadata = await img.metadata();
 
   const result = { ...metadata };
@@ -117,6 +132,16 @@ export async function getInfo({ path }) {
       result.normalizedWidth = metadata.width;
       result.normalizedHeight = metadata.height;
   }
+
+  const dirname = rootCachePathGet({ project, identifier });
+
+  if (!fs.existsSync(dirname)) {
+    fs.mkdirSync(dirname, { recursive: true });
+  }
+
+  fs.writeFile(cachePath, JSON.stringify(result, null, 2), (err) => {
+    if (err) console.log(err);
+  });
 
   return result;
 }
