@@ -182,7 +182,7 @@ export async function transformImage(img, operations) {
       }
       case "rotate": {
         const angle = operation.options.angle
-          ? parseInt(operation.options.angle, 10)
+          ? parseFloat(operation.options.angle)
           : null;
         try {
           img = img.rotate(angle);
@@ -230,6 +230,10 @@ export async function transformImage(img, operations) {
           console.log(`An error occurred during processing: ${error}`);
         }
 
+        break;
+      }
+      case "nop":
+      case "noop": {
         break;
       }
 
