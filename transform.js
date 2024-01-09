@@ -180,6 +180,17 @@ export async function transformImage(img, operations) {
         }
         break;
       }
+      case "rotate": {
+        const angle = operation.options.angle
+          ? parseInt(operation.options.angle, 10)
+          : null;
+        try {
+          img = img.rotate(angle);
+        } catch (err) {
+          console.log(err);
+        }
+        break;
+      }
       case "flatten": {
         const background = operation.options.background;
 
