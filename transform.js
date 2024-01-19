@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import sharp from "sharp";
+import exifreader from "exifreader";
 import objHash from "object-hash";
 
 const ROOT_UPLOAD_PATH = process.env.ROOT_UPLOAD_PATH;
@@ -46,8 +47,14 @@ export async function getProcessed({
   return img;
 }
 
-export function isCached({ project, operations, format, identifier }) {
-  const cachKey = objHash({ project, operations, format, identifier });
+export function isCached({ project, operations, format, identifier, version }) {
+  const cachKey = objHash({
+    project,
+    operations,
+    format,
+    identifier,
+    version: version || 1,
+  });
 
   const cachePath = path.join(
     rootCachePathGet({ project, identifier }),
@@ -97,6 +104,7 @@ export async function getInfo({ project, operations, format, identifier }) {
     operations,
     format,
     identifier,
+    version: 2,
   });
 
   if (status) {
@@ -110,6 +118,11 @@ export async function getInfo({ project, operations, format, identifier }) {
   const { orientation } = await img.metadata();
 
   const metadata = await img.metadata();
+
+  if (metadata.exif) {
+    const tags = exifreader.load(metadata.exif);
+    metadata.exif = tags;
+  }
 
   const result = { ...metadata };
 

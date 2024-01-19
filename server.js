@@ -551,7 +551,7 @@ app.get(
 
     try {
       if (format === "json") {
-        const { exif, ...meta } = await getInfo({
+        const meta = await getInfo({
           project,
           operations,
           format,
