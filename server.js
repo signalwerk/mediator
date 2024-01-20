@@ -10,7 +10,7 @@ import {
   syncFolderToDropbox,
   dbx,
 } from "./syncProjectToDropbox.js";
-import { getAsset, computeImage, getInfo, getProcessed } from "./transform.js";
+import { getAsset, computeImage, getInfo, getProcessed, CACHE_ENABLED } from "./transform.js";
 
 import cron from "node-cron";
 import dotenv from "dotenv";
@@ -563,6 +563,7 @@ app.get(
           operations,
           format,
           identifier,
+          cache: CACHE_ENABLED,
           meta,
         });
         return;

@@ -1,11 +1,14 @@
 import fs from "fs";
 import path from "path";
 import sharp from "sharp";
-import exifreader from "exifreader";
+import icc from "icc";
+import ExifReader from "exifreader";
+
 import objHash from "object-hash";
 
 const ROOT_UPLOAD_PATH = process.env.ROOT_UPLOAD_PATH;
 const ROOT_CACHE_PATH = process.env.ROOT_CACHE_PATH;
+export const CACHE_ENABLED = !((process.env.CACHE_ENABLED || "true") === "false");
 
 function rootPathGet({ project, identifier }) {
   return `${ROOT_UPLOAD_PATH}/${project}/${identifier}`;
@@ -107,7 +110,7 @@ export async function getInfo({ project, operations, format, identifier }) {
     version: 2,
   });
 
-  if (status) {
+  if (CACHE_ENABLED && status) {
     return JSON.parse(fs.readFileSync(cachePath));
   }
 
@@ -120,11 +123,20 @@ export async function getInfo({ project, operations, format, identifier }) {
   const metadata = await img.metadata();
 
   if (metadata.exif) {
-    const tags = exifreader.load(metadata.exif);
+    // Parse the EXIF data
+    const tags = await ExifReader.load(path);
     metadata.exif = tags;
   }
 
-  const result = { ...metadata };
+  if (metadata.icc) {
+    const profile = icc.parse(metadata.icc);
+    metadata.icc = profile;
+  }
+
+  const result = {
+    path,
+    ...metadata,
+  };
 
   switch (orientation) {
     case 1:
@@ -146,15 +158,17 @@ export async function getInfo({ project, operations, format, identifier }) {
       result.normalizedHeight = metadata.height;
   }
 
-  const dirname = rootCachePathGet({ project, identifier });
+  if (CACHE_ENABLED) {
+    const dirname = rootCachePathGet({ project, identifier });
 
-  if (!fs.existsSync(dirname)) {
-    fs.mkdirSync(dirname, { recursive: true });
+    if (!fs.existsSync(dirname)) {
+      fs.mkdirSync(dirname, { recursive: true });
+    }
+
+    fs.writeFile(cachePath, JSON.stringify(result, null, 2), (err) => {
+      if (err) console.log(err);
+    });
   }
-
-  fs.writeFile(cachePath, JSON.stringify(result, null, 2), (err) => {
-    if (err) console.log(err);
-  });
 
   return result;
 }
